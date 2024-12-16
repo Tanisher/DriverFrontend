@@ -12,15 +12,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
+  // Add a new variable to store the selected role
+  String? selectedRole;
+
+  // List of available roles
+  final List<String> roles = ['OFFICE', 'DRIVER', 'MECHANIC', 'ADMIN'];
+
   Future<void> signUp() async {
+    // Validate that a role is selected
+    if (selectedRole == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please select a role')),
+      );
+      return;
+    }
+
     final response = await http.post(
-      Uri.parse('http://192.168.32.11:8080/api/auth/signup'),
+      Uri.parse('http://192.168.32.85:8080/api/auth/signup'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': usernameController.text,
         'email': emailController.text,
         'password': passwordController.text,
-        'role': 'Office', // Default role
+        'role': selectedRole, // Use the selected role
       }),
     );
 
@@ -68,6 +82,27 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 labelText: 'Password',
                 border: OutlineInputBorder(),
               ),
+            ),
+            SizedBox(height: 10),
+            // Add a dropdown for role selection
+            DropdownButtonFormField<String>(
+              decoration: InputDecoration(
+                labelText: 'Select Role',
+                border: OutlineInputBorder(),
+              ),
+              value: selectedRole,
+              items: roles.map((String role) {
+                return DropdownMenuItem<String>(
+                  value: role,
+                  child: Text(role),
+                );
+              }).toList(),
+              onChanged: (String? newValue) {
+                setState(() {
+                  selectedRole = newValue;
+                });
+              },
+              hint: Text('Choose a Role'),
             ),
             SizedBox(height: 20),
             ElevatedButton(
