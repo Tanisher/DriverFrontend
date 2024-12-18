@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:logistics_app/screens/LoginScreen.dart';
 import 'package:logistics_app/screens/SignUpScreen.dart';
+import 'package:logistics_app/screens/admin/admin.dart';
 import 'package:logistics_app/screens/driver.dart';
 import 'package:logistics_app/screens/driver_list_screen.dart';
 import 'package:logistics_app/screens/landing.dart';
@@ -18,11 +19,12 @@ class MyApp extends StatelessWidget {
       routes: {
         '/signup': (context) => SignUpScreen(),
         '/login': (context) => LoginScreen(),
-        '/home': (context) => DriverListScreen(
-              drivers: fetchDrivers(), // This is now correctly imported
-            ),
-        '/driver': (context) => DriverScreen(),
+        // '/home': (context) => DriverListScreen(
+        //       drivers: fetchDrivers(), // This is now correctly imported
+        //     ),
+        '/driver': (context) => const DriverTripSheet(),
         '/landing': (context) => LandingScreen(),
+        '/admin': (context) => AdminDashboard(),
       },
     );
   }

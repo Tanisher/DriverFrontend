@@ -1,0 +1,28 @@
+^C:\USERS\DEL\DESKTOP\DONT TOUCH MOBILE\LOGISTICS_APP\BUILD\WINDOWS\CMAKEFILES\EA4EBEAE80BB07A0B39522DAE4BBC08A\FLUTTER_WINDOWS.DLL.RULE
+setlocal
+"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -E env FLUTTER_ROOT=C:\flutter "PROJECT_DIR=C:\Users\DEL\Desktop\dont touch mobile\logistics_app" FLUTTER_ROOT=C:\flutter "FLUTTER_EPHEMERAL_DIR=C:\Users\DEL\Desktop\dont touch mobile\logistics_app\windows\flutter\ephemeral" "PROJECT_DIR=C:\Users\DEL\Desktop\dont touch mobile\logistics_app" "FLUTTER_TARGET=C:\Users\DEL\Desktop\dont touch mobile\logistics_app\lib\main.dart" DART_DEFINES=RkxVVFRFUl9XRUJfQVVUT19ERVRFQ1Q9dHJ1ZQ== DART_OBFUSCATION=false TRACK_WIDGET_CREATION=true TREE_SHAKE_ICONS=false "PACKAGE_CONFIG=C:\Users\DEL\Desktop\dont touch mobile\logistics_app\.dart_tool\package_config.json" C:/flutter/packages/flutter_tools/bin/tool_backend.bat windows-x64 Debug
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\DEL\DESKTOP\DONT TOUCH MOBILE\LOGISTICS_APP\BUILD\WINDOWS\CMAKEFILES\25E2DB08CD0388798EB5F834771DEEA2\FLUTTER_ASSEMBLE.RULE
+setlocal
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\DEL\DESKTOP\DONT TOUCH MOBILE\LOGISTICS_APP\WINDOWS\FLUTTER\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" "-SC:/Users/DEL/Desktop/dont touch mobile/logistics_app/windows" "-BC:/Users/DEL/Desktop/dont touch mobile/logistics_app/build/windows" --check-stamp-file "C:/Users/DEL/Desktop/dont touch mobile/logistics_app/build/windows/flutter/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

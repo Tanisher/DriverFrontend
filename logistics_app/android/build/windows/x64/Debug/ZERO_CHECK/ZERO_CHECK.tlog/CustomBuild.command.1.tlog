@@ -1,0 +1,10 @@
+^C:\USERS\DEL\DESKTOP\DONT TOUCH MOBILE\LOGISTICS_APP\BUILD\WINDOWS\CMAKEFILES\7BCEC4AB3F6D2810C8905F69B6DD88AA\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" "-SC:/Users/DEL/Desktop/dont touch mobile/logistics_app/windows" "-BC:/Users/DEL/Desktop/dont touch mobile/logistics_app/build/windows" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "C:/Users/DEL/Desktop/dont touch mobile/logistics_app/build/windows/logistics_app.sln"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

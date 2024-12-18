@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\DEL\Desktop\dont touch mobile\logistics_app\build\windows\CMakeFiles\6ec88a7e3f3c3b1530a5b6f8a87e2083\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{BFEEE63F-2CB2-3726-AF33-BDBBEE37E0B6}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
