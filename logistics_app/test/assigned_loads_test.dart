@@ -4,7 +4,7 @@ import 'package:logistics_app/classes/Load.dart';
 import 'package:logistics_app/screens/driver.dart';
 
 void main() {
-  Load sampleLoad() {
+  Load sampleLoad({String cargoType = '', String actualWeight = ''}) {
     return Load(
       id: 12,
       customerId: 4,
@@ -14,6 +14,8 @@ void main() {
       pickupLocation: 'Harare',
       deliveryLocation: 'Bulawayo',
       status: 'ASSIGNED',
+      cargoType: cargoType,
+      actualWeight: actualWeight,
     );
   }
 
@@ -36,11 +38,90 @@ void main() {
     expect(load.weight, '12');
   });
 
+  test('Load.fromJson reads cargoType and actualWeight', () {
+    final bulk = Load.fromJson({
+      'id': 12,
+      'description': 'Chrome',
+      'weight': '',
+      'pickupLocation': 'Mine',
+      'deliveryLocation': 'Smelter',
+      'status': 'ASSIGNED',
+      'cargoType': 'BULK',
+    });
+    expect(bulk.cargoType, 'BULK');
+    expect(bulk.isBulk, isTrue);
+    expect(bulk.needsWeighbridge, isTrue);
+
+    final bagged = Load.fromJson({
+      'id': 13,
+      'description': 'Maize bags',
+      'weight': '12t',
+      'pickupLocation': 'Harare',
+      'deliveryLocation': 'Bulawayo',
+      'status': 'ASSIGNED',
+      'cargo_type': 'BAGGED',
+    });
+    expect(bagged.isBagged, isTrue);
+    expect(bagged.needsWeighbridge, isFalse);
+
+    final alreadyWeighed = Load.fromJson({
+      'id': 14,
+      'description': 'Chrome',
+      'pickupLocation': 'Mine',
+      'deliveryLocation': 'Smelter',
+      'status': 'ASSIGNED',
+      'cargoType': 'BULK',
+      'actualWeight': 28.4,
+    });
+    expect(alreadyWeighed.needsWeighbridge, isFalse);
+  });
+
   test('tripPhaseOf maps backend statuses onto the two-leg flow', () {
     expect(tripPhaseOf(null), TripPhase.ready);
     expect(tripPhaseOf(Trip(status: 'DEADHEAD')), TripPhase.deadhead);
     expect(tripPhaseOf(Trip(status: 'LOADED')), TripPhase.loaded);
     expect(tripPhaseOf(Trip(status: 'COMPLETED')), TripPhase.ready);
+  });
+
+  test('loadedTripFromDeadheadEndResponse uses server id and status', () {
+    final nested = loadedTripFromDeadheadEndResponse(
+      '{"loadedTrip":{"id":44,"status":"LOADED","loadId":12}}',
+    );
+    expect(nested?.id, 44);
+    expect(tripPhaseOf(nested), TripPhase.loaded);
+
+    final bodyIsLoadedTrip = loadedTripFromDeadheadEndResponse(
+      '{"id":44,"status":"LOADED"}',
+    );
+    expect(bodyIsLoadedTrip?.id, 44);
+
+    expect(
+      loadedTripFromDeadheadEndResponse('{"id":21,"status":"DEADHEAD"}'),
+      isNull,
+    );
+    expect(loadedTripFromDeadheadEndResponse('{}'), isNull);
+  });
+
+  test('activeTripFromResponseBody restores deadhead, loaded, or none', () {
+    final deadhead = activeTripFromResponseBody(
+      '{"activeTrip":{"id":10,"status":"DEADHEAD","loadId":12}}',
+    );
+    expect(deadhead?.id, 10);
+    expect(tripPhaseOf(deadhead), TripPhase.deadhead);
+
+    final loaded = activeTripFromResponseBody(
+      '{"id":44,"status":"LOADED"}',
+    );
+    expect(loaded?.id, 44);
+    expect(tripPhaseOf(loaded), TripPhase.loaded);
+
+    expect(activeTripFromResponseBody(''), isNull);
+    expect(activeTripFromResponseBody('null'), isNull);
+    expect(activeTripFromResponseBody('{"activeTrip":null}'), isNull);
+    expect(
+      activeTripFromResponseBody('{"id":10,"status":"COMPLETED"}'),
+      isNull,
+    );
   });
 
   test('mileageRejectionMessage uses backend text instead of a generic failure',
@@ -280,6 +361,116 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('BULK deadhead shows optional weighbridge reading',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      _tripFlow(
+        load: sampleLoad(cargoType: 'BULK'),
+        phase: TripPhase.deadhead,
+        weighbridgeController: TextEditingController(),
+      ),
+    );
+
+    expect(find.text('Weighbridge reading'), findsOneWidget);
+    expect(find.text('Arrived / End deadhead'), findsOneWidget);
+  });
+
+  testWidgets('BAGGED deadhead hides weighbridge reading',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      _tripFlow(
+        load: sampleLoad(cargoType: 'BAGGED'),
+        phase: TripPhase.deadhead,
+        weighbridgeController: TextEditingController(),
+      ),
+    );
+
+    expect(find.text('Weighbridge reading'), findsNothing);
+  });
+
+  testWidgets('BULK loaded requires weighbridge if not yet recorded',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      _tripFlow(
+        load: sampleLoad(cargoType: 'BULK'),
+        phase: TripPhase.loaded,
+        weighbridgeController: TextEditingController(),
+      ),
+    );
+
+    expect(find.text('Weighbridge reading'), findsOneWidget);
+    expect(find.text('Complete delivery'), findsOneWidget);
+  });
+
+  testWidgets('BAGGED loaded hides weighbridge reading',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      _tripFlow(
+        load: sampleLoad(cargoType: 'BAGGED'),
+        phase: TripPhase.loaded,
+        weighbridgeController: TextEditingController(),
+      ),
+    );
+
+    expect(find.text('Weighbridge reading'), findsNothing);
+  });
+
+  testWidgets('BULK start-trip step does not show weighbridge',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      _tripFlow(
+        load: sampleLoad(cargoType: 'BULK'),
+        phase: TripPhase.ready,
+        weighbridgeController: TextEditingController(),
+      ),
+    );
+
+    expect(find.text('Weighbridge reading'), findsNothing);
+    expect(find.text('Start trip'), findsOneWidget);
+  });
+
+  testWidgets('BULK hides weighbridge after actual weight is stored',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      _tripFlow(
+        load: sampleLoad(cargoType: 'BULK', actualWeight: '28.4'),
+        phase: TripPhase.loaded,
+        weighbridgeController: TextEditingController(),
+      ),
+    );
+
+    expect(find.text('Weighbridge reading'), findsNothing);
+  });
 }
 
 void _noopSelect(Load load) {}
+
+Widget _tripFlow({
+  required Load load,
+  required TripPhase phase,
+  TextEditingController? weighbridgeController,
+}) {
+  return MaterialApp(
+    home: Scaffold(
+      body: Form(
+        child: TripFlowPanel(
+          load: load,
+          phase: phase,
+          startMileage: '1000',
+          startMileageController: TextEditingController(),
+          endMileageController: TextEditingController(),
+          dieselController: TextEditingController(),
+          trailer1Controller: TextEditingController(),
+          trailer2Controller: TextEditingController(),
+          weighbridgeController: weighbridgeController,
+          endMileageError: null,
+          isSubmitting: false,
+          onStartTrip: () {},
+          onEndDeadhead: () {},
+          onCompleteDelivery: () {},
+        ),
+      ),
+    ),
+  );
+}

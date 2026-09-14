@@ -4,7 +4,7 @@ This is not a finished product. It is a mid-build **fleet logistics operations a
 
 The repo is named `DriverFrontend`, the Flutter package is `logistics_app`, and the landing copy says “Manage your trips and logistics.” Taken together, the intended system is:
 
-> Office staff book work against customers. Loads move on trucks and trailers. Drivers record each run (mileage, diesel, destination). Admins see the fleet. Mechanics deal with faults. Someone in the office can watch where a truck is.
+> Office staff book work against customers. Loads move on trucks and trailers. Drivers record each run (mileage, diesel, trailers, and a weighbridge reading for bulk). Admins see the fleet. Mechanics deal with faults. Someone in the office can watch where a truck is.
 
 That is a standard small-fleet TMS (transport management) shape. The code was built toward that, then stopped partway through.
 
@@ -22,19 +22,18 @@ A company that:
 - Tracks **faults** (breakdowns / workshop)
 - Wants **live GPS** on vehicles
 
-The driver screen is a **trip sheet**, not a consumer maps app. Fields match a paper daily sheet:
+The driver screen is a **trip sheet**, not a consumer maps app. The sheet is now a two-leg run against an assigned load:
 
 | Paper field | In the app |
 |-------------|------------|
-| Date | Date picker |
-| Vehicle registration | Plate |
-| Customer | Name field (not yet wired to IDs) |
-| Destination | Text |
-| Start / end mileage | Numbers, end must be higher |
-| Diesel litres | Fuel |
-| Trailers | Trailer 1 (trailer 2 reserved) |
+| Vehicle | Read-only assigned plate (`GET /api/drivers/me/assigned-vehicle`) |
+| Load / route | Pick from assigned loads (pickup → delivery) |
+| Start / end mileage | Numbers; backend `400`/`422` millage errors show on the field |
+| Diesel litres | Fuel, on the loaded (delivery) leg |
+| Trailers | Trailer 1 and trailer 2, on the loaded leg |
+| Weighbridge | **BULK** only — pickup (optional) or delivery (required if still blank) → `PATCH /api/loads/{id}/actual-weight` |
 
-That is the core driver job: fill the sheet after (or during) a run so the office has kilometres, fuel, and where the truck went.
+That is the core driver job: run deadhead to pickup, then the loaded leg to delivery, so the office has kilometres, fuel, trailers, and (for bulk) actual weight.
 
 ---
 
@@ -45,7 +44,7 @@ Signup already lists four roles. Only two have a home screen. The other two look
 | Role | What the code implies they were for | Built? |
 |------|-------------------------------------|--------|
 | **ADMIN** | Full operations dashboard | Partially — 4 of 6 sections |
-| **DRIVER** | Own trip sheet: create + list trips | Partially — form works, load/customer hard-coded |
+| **DRIVER** | Own trip sheet: two-leg run on an assigned load | Built — assigned load/vehicle, deadhead + loaded, BULK weighbridge; no trip-history list |
 | **OFFICE** | Bookings, customers, loads, orders without full admin power | Role exists, no UI |
 | **MECHANIC** | Vehicle faults, service dates, workshop | Role exists; fault **model + API** exist on vehicles, no mechanic home |
 
@@ -58,7 +57,7 @@ That pattern is typical: auth and role names land first, then screens per role. 
 A plausible finished version, inferred only from what is already in the tree:
 
 1. **Landing → signup / login** with JWT. Session stays on the device.
-2. **Driver** opens a trip sheet, picks a real load and customer, records two trailers, sees their history, maybe kilometres calculated (`_calculateKms` exists and is unused).
+2. **Driver** opens a trip sheet, picks a real assigned load, records two trailers on delivery, and (for **BULK**) a weighbridge reading. Trip history list and computed kilometres are still not shown.
 3. **Admin / office** runs the company from one dashboard:
    - Customers
    - Orders (commercial) → become Loads (operational)
@@ -91,21 +90,18 @@ Landing, login, signup, `AuthService`, JWT in `SharedPreferences`. Login routes 
 
 The same `fetchDrivers` file exists twice (`lib/service/` and `lib/screens/`). Copy-paste while figuring out folders.
 
-### 4. Driver trip sheet — the main driver feature, still mid-wiring
+### 4. Driver trip sheet — later rewired to the two-leg API
 
-`driver.dart` is the longest, noisiest file: JWT debug prints, comments like “Double-check your exact endpoint”, “Form for adding trips (which was missing in the previous snippet)”. Someone was iterating against a live backend and fighting the trip API.
+The first pass was a one-shot `POST /api/driver-trips/create` form with hardcoded `loadId: 1` / `customerId: 1`, a destination field, and `GET /api/driver-trips/driver/username/{id}` for a records table. That is gone from compiled `lib/screens/driver.dart` (and the stale `android/` / `windows/` copies of that file were deleted).
 
-Unfinished on purpose, called out in comments:
+The sheet now:
 
-```text
-loadId: 1,    // You'll need to handle load selection
-customerId: 1, // You'll need to handle customer selection
-trailer2: '',  // Add second trailer if applicable
-```
+- Loads assigned work and vehicle from `/api/drivers/me/*`
+- Restores an in-progress trip from `GET /api/drivers/me/active-trip`
+- Posts `deadhead-start` → `deadhead-end` → `loaded-trip-end`
+- PATCHes `actual-weight` for **BULK** cargo at pickup or delivery
 
-Customer name is collected in the form and **not sent**. The table header was changed from “Customer Name” to “Customer ID”. They were aligning the UI to the API shape and had not finished the pickers.
-
-Kilometres helper exists; it is not shown. That was the next small UX beat after mileage fields.
+Admin load create still does not collect `cargoType`; the driver UI trusts whatever the assigned-load payload sends.
 
 ### 5. Admin dashboard scaffolded as six modules at once
 
@@ -122,7 +118,7 @@ That is what “still in production” looks like: the IA is committed; the last
 | Module | How far it got |
 |--------|----------------|
 | Customers | List, add, details. Delete is still a GET (wrong method). Validation written, not called. |
-| Loads | List, add (with customer dropdown), delete. Tied to customers — loads were built *after* customers. |
+| Loads | List, add (with customer dropdown), delete. No `cargoType` on create; BULK weighbridge is driver-side. |
 | Drivers | List, add (full HR form), delete. No edit. |
 | Vehicles | The deepest page: add/edit/delete, assign driver, faults, Dio (not `http`), WebSocket GPS. |
 | Trailers | Title + dead buttons + FAB. |
@@ -140,7 +136,7 @@ Faults on vehicles + a `MECHANIC` role + `lastServiceDate` is the workshop slice
 
 ### 8. Messy multi-platform copies
 
-`android/lib/` and `windows/lib/` duplicate the Dart sources. Flutter does not use those. That is “we ran it on Windows and Android and copied the project around,” not a second app. Same for extra READMEs under those folders.
+`android/lib/` and `windows/lib/` still hold some duplicate Dart sources; Flutter does not compile them. The old one-shot `screens/driver.dart` copies in those trees were deleted so they would not be edited by mistake.
 
 ---
 
@@ -150,8 +146,8 @@ Do not treat Trailers, Orders, OFFICE, or MECHANIC as fake or cancelled.
 
 Treat them as **the remaining production backlog**, in roughly this order:
 
-1. Stop hard-coding trip `loadId` / `customerId`; pickers on the trip sheet (comments already say this).
-2. Second trailer on the trip.
+1. Admin load create: `cargoType` (BULK / BAGGED) so weighbridge gating is not backend-only.
+2. Driver trip history (the old username GET + records table were removed with the one-shot form).
 3. **Trailers** admin CRUD (the sidebar slot is waiting).
 4. **Orders** admin CRUD, likely feeding Loads.
 5. OFFICE home (probably a subset of the admin rail).
@@ -167,4 +163,4 @@ Until those exist, the app is an **ops console + driver trip sheet**, talking to
 ## One-line verdict
 
 **Intended:** a multi-role haulage TMS (office, drivers, mechanics, live fleet).  
-**Actually built:** login, a half-wired driver trip sheet, and an admin dashboard whose last two modules (trailers, orders) are still empty frames from that same production pass — not decoration.
+**Actually built:** login, a two-leg driver trip sheet (assigned load/vehicle, deadhead + loaded, BULK weighbridge), and an admin dashboard whose last two modules (trailers, orders) are still empty frames from that same production pass — not decoration.

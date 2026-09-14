@@ -2,7 +2,7 @@
 
 Flutter frontend for the logistics / driver platform.
 
-The app lives in **[`logistics_app/`](logistics_app/)**. That folder has the full README: features, roles, screens, models, API calls, auth, WebSocket GPS, setup, and known gaps.
+The app lives in **[`logistics_app/`](logistics_app/)**. That folder has the full README: features, roles, screens (including the two-leg driver trip sheet and BULK weighbridge), models, API calls, auth, WebSocket GPS, setup, and known gaps.
 
 ```bash
 cd logistics_app

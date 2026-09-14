@@ -33,7 +33,7 @@ Two user experiences share the same binary:
 
 | Role | After login | What they can do |
 |------|-------------|------------------|
-| **DRIVER** | Driver trip sheet (`/driver`) | Create trips (date, vehicle, customer, destination, mileage, diesel, trailers) and see their own trip history |
+| **DRIVER** | Driver trip sheet (`/driver`) | Pick an assigned load, run a two-leg trip (deadhead → loaded), record mileage / diesel / trailers, and enter a weighbridge reading for **BULK** cargo |
 | **ADMIN** | Admin dashboard (`/admin`) | CRUD customers, loads, drivers, vehicles; assign drivers to vehicles; view vehicle faults; live GPS on vehicles |
 
 Signup also offers **OFFICE** and **MECHANIC**, but login only routes **ADMIN** and **DRIVER**. Other roles show an “Unauthorized role” snackbar.
@@ -150,12 +150,32 @@ Username + password. On `200`, saves JWT and routes by role.
 
 ### Driver trip sheet (`lib/screens/driver.dart`)
 
-1. Reads JWT, extracts user id (`id` / `userId` / `sub` / `user_id`).
-2. `GET /api/driver-trips/driver/username/{userId}` — `200` lists trips, `204` means none.
-3. Form: date picker, vehicle registration, customer name, destination, start/end mileage (end must be greater than start), diesel litres, trailers.
-4. `POST /api/driver-trips/create` on success (`201`) refreshes the table.
+The driver screen is a **two-leg trip sheet**, not a one-shot create form. On open (and pull-to-refresh) it loads JWT user id (`id` / `userId` / `sub` / `user_id`), then:
 
-**Caveats:** `loadId` and `customerId` are hardcoded to `1`. Customer name is collected in the form but not sent. Only `trailer1` is sent; `trailer2` is `''`. Pull-to-refresh reloads trips. Summary card shows total trip count.
+1. `GET /api/drivers/me/assigned-loads` — pick a real assigned load (no hardcoded `loadId` / `customerId`).
+2. `GET /api/drivers/me/assigned-vehicle` — read-only plate/make/model from the driver profile (no vehicle picker).
+3. `GET /api/drivers/me/active-trip` — restore deadhead, loaded, or none so a killed app can resume.
+
+Flow:
+
+| Phase | What the driver does | API |
+|-------|----------------------|-----|
+| **Ready** | Select a load, enter start mileage, **Start trip** | `POST /api/driver-trips/deadhead-start` `{ loadId, startMileage, driverId }` |
+| **Deadhead** | Banner “Deadhead — en route to pickup”. End mileage, then **Arrived / End deadhead** | `POST /api/driver-trips/deadhead-end` `{ tripId, endMileage }` |
+| **Loaded** | Banner “Loaded — en route to delivery”. End mileage, diesel, trailer 1 and 2, then **Complete delivery** | `POST /api/driver-trips/loaded-trip-end` `{ tripId, endMileage, fuelLitres, trailer1, trailer2 }` |
+
+If deadhead-end does not return a usable loaded-trip id, the sheet asks the driver to pull to refresh. It does **not** reuse the deadhead id or force status `LOADED`.
+
+Mileage `400` / `422` rejections from the backend are shown on the end-mileage field, not as a generic toast.
+
+**BULK vs BAGGED**
+
+`Load.cargoType` comes from the assigned-load payload (`cargoType` / `cargo_type` / `loadType`).
+
+- **BULK:** a **Weighbridge reading** field is shown at pickup (optional — the bridge may be at the other stop) and at delivery (required if still blank). Submitting that step first `PATCH /api/loads/{id}/actual-weight` with `{ "actualWeight": <number> }`, then the trip POST. After a successful save the field is hidden.
+- **BAGGED:** the field is hidden; booked weight on the load record is enough.
+
+There is no trip-history table and no destination field. Office admin **Loads** is still create/list/delete only — it does not collect `cargoType` or weighbridge readings.
 
 ### Admin dashboard (`lib/screens/admin/admin.dart`)
 
@@ -176,7 +196,7 @@ List name/email. Eye icon → `GET /api/customers/{id}` details dialog. FAB → 
 
 ### Loads
 
-List by customer name (customers fetched first). FAB → dialog: customer dropdown, description, weight, pickup, delivery, status. Delete via `DELETE /api/loads/{id}`.
+List by customer name (customers fetched first). FAB → dialog: customer dropdown, description, weight, pickup, delivery, status. Delete via `DELETE /api/loads/{id}`. The dialog does not set `cargoType`; drivers get BULK vs BAGGED from the assigned-load API.
 
 ### Drivers
 
@@ -220,12 +240,14 @@ logistics_app/
 │           ├── load.dart
 │           ├── driver.dart
 │           └── vehicle.dart
-├── test/widget_test.dart         # Default counter test (not updated for this app)
+├── test/
+│   ├── widget_test.dart          # Default counter test (not updated for this app)
+│   └── assigned_loads_test.dart  # Driver trip sheet / assigned loads / weighbridge
 ├── pubspec.yaml
 └── README.md
 ```
 
-`android/lib/` and `windows/lib/` contain **copies** of Dart sources. They are not what `flutter run` compiles. Edit `logistics_app/lib/` only.
+`android/lib/` and `windows/lib/` may still contain **stale copies** of some Dart sources. They are not what `flutter run` compiles. Edit `logistics_app/lib/` only. The old one-shot `android/lib/screens/driver.dart` and `windows/lib/screens/driver.dart` duplicates were removed.
 
 ---
 
@@ -241,8 +263,9 @@ logistics_app/
 
 ### Load
 
-`id?`, `customerId?`, `description`, `weight`, `pickupLocation`, `deliveryLocation`, `status`  
-JSON uses `customerId` (id only, not a nested customer object).
+`id?`, `customerId?`, `driverId?`, `customerName?`, `description`, `weight`, `pickupLocation`, `deliveryLocation`, `status`, `cargoType`, `actualWeight`  
+`fromJson` also reads nested `customer` / `driver` objects and `cargo_type` / `loadType` / `actual_weight`.  
+`isBulk` / `needsWeighbridge` drive the driver weighbridge field (`BULK` and no `actualWeight` yet). **BAGGED** never shows that field.
 
 ### Vehicle
 
@@ -255,8 +278,8 @@ JSON uses `customerId` (id only, not a nested customer object).
 
 ### Trip (defined in `screens/driver.dart`, not `classes/`)
 
-`id?`, `dateTime`, `destination`, `startingMillage`, `endingMillage`, `fuelLitres`, `trailer1`, `trailer2`, `plateNumber`, `driverId`, `loadId`, `customerId`  
-`fromJson` expects nested `driver` / `load` / `customer` objects with `id`. `toJson` sends flat ids.
+`id?`, `dateTime`, `startingMillage`, `endingMillage`, `fuelLitres`, `trailer1`, `trailer2`, `plateNumber`, `driverId`, `loadId`, `customerId`, `status`, `legType`  
+`fromJson` accepts nested `driver` / `load` / `customer` ids and both `startMileage` / `startingMillage` (and the same pair for end). There is no `destination` field.
 
 ---
 
@@ -279,14 +302,19 @@ Authenticated calls send `Authorization: Bearer <jwt>` and usually `Content-Type
 | `GET` | `/api/loads` | Loads list | `200` |
 | `POST` | `/api/loads` | Create load | `200` / `201` |
 | `DELETE` | `/api/loads/{id}` | Delete load | `200` |
+| `PATCH` | `/api/loads/{id}/actual-weight` | Driver BULK weighbridge `{ actualWeight }` | `200` / `201` / `204` |
+| `GET` | `/api/drivers/me/assigned-loads` | Driver assigned loads | `200` or `204` |
+| `GET` | `/api/drivers/me/assigned-vehicle` | Driver assigned vehicle | `200`, `204`, or `404` |
+| `GET` | `/api/drivers/me/active-trip` | Restore in-progress trip | `200` or empty |
 | `GET` | `/api/vehicles` | Vehicles list (Dio) | `200` |
 | `POST` | `/api/vehicles` | Add vehicle | `200` / `201` |
 | `PUT` | `/api/vehicles/{id}` | Update vehicle | `200` |
 | `DELETE` | `/api/vehicles/{id}` | Delete vehicle | `200` / `204` |
 | `GET` | `/api/vehicles/{id}/faults` | Faults dialog | `200` |
 | `PUT` | `/api/vehicles/{id}/assign-driver` | Body `{ driverId }` | `200` |
-| `GET` | `/api/driver-trips/driver/username/{userId}` | Driver trips | `200` or `204` |
-| `POST` | `/api/driver-trips/create` | Add trip | `201` |
+| `POST` | `/api/driver-trips/deadhead-start` | Start empty leg | `200` / `201` |
+| `POST` | `/api/driver-trips/deadhead-end` | Arrive at pickup | `200` / `201` |
+| `POST` | `/api/driver-trips/loaded-trip-end` | Complete delivery | `200` / `201` |
 | WS | `/ws` | Vehicle GPS | `{ vehicleId, latitude, longitude }` |
 
 ---
@@ -348,14 +376,15 @@ Documented so the README matches the code:
 1. **Backend host** is duplicated, not centralized.
 2. **OFFICE / MECHANIC** can sign up but cannot log in to a screen.
 3. **Trailers** and **Orders** are UI stubs.
-4. **Driver trips** always send `loadId: 1` and `customerId: 1`; customer name is not submitted.
+4. **Admin load create** does not set `cargoType`; BULK vs BAGGED (and the weighbridge field) depend on the backend payload on assigned loads.
 5. **Customer delete** uses GET, not DELETE.
 6. **`DriverListScreen`** and `fetchDrivers()` are unused by routing.
-7. **`test/widget_test.dart`** is still the default counter test (`const MyApp()` but `MyApp` has no `const` constructor).
-8. **Duplicate Dart trees** under `android/lib` and `windows/lib`.
+7. **`test/widget_test.dart`** is still the default counter test (`const MyApp()` but `MyApp` has no `const` constructor). Driver trip-sheet coverage lives in `test/assigned_loads_test.dart`.
+8. **Stale Dart copies** may still exist under `android/lib` and `windows/lib` (not compiled). The old one-shot `driver.dart` duplicates were deleted.
 9. **No logout**, session timeout, or token refresh.
 10. **GPS** is stored on the vehicle model but not shown on a map.
 11. **`provider`** is unused; screens talk to HTTP directly.
+12. Loaded-trip-end sends `fuelLitres`; if the backend DTO is `dieselLitres`, that still needs aligning.
 
 ---
 

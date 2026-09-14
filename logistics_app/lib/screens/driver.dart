@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:intl/intl.dart';
 import 'package:logistics_app/classes/Load.dart';
 import 'package:logistics_app/service/auth_service.dart';
 
@@ -32,6 +31,11 @@ dynamic millageJson(String text) {
   return int.tryParse(trimmed) ?? trimmed;
 }
 
+dynamic weighbridgeJson(String text) {
+  final trimmed = text.trim();
+  return double.tryParse(trimmed) ?? trimmed;
+}
+
 String? mileageRejectionMessage(int statusCode, String body) {
   if (statusCode == 200 || statusCode == 201 || statusCode == 204) {
     return null;
@@ -58,6 +62,7 @@ String? mileageRejectionMessage(int statusCode, String body) {
         decoded['message'],
         decoded['error'],
         decoded['detail'],
+        decoded['endMileage'],
         decoded['endingMillage'],
         decoded['endingMileage'],
         decoded['title'],
@@ -130,6 +135,134 @@ class AssignedVehicle {
   }
 }
 
+int? jsonId(dynamic value) {
+  if (value == null) return null;
+  if (value is Map) return jsonId(value['id']);
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value.toString());
+}
+
+Trip? loadedTripFromDeadheadEndResponse(String body) {
+  if (body.trim().isEmpty) return null;
+  try {
+    return loadedTripFromDecoded(json.decode(body));
+  } catch (_) {
+    return null;
+  }
+}
+
+Trip? loadedTripFromDecoded(dynamic decoded) {
+  if (decoded == null) return null;
+
+  if (decoded is List) {
+    for (final item in decoded) {
+      final trip = loadedTripFromDecoded(item);
+      if (trip != null) return trip;
+    }
+    return null;
+  }
+
+  if (decoded is! Map) return null;
+  final map = Map<String, dynamic>.from(decoded);
+
+  for (final key in ['loadedTrip', 'loaded_trip']) {
+    if (map[key] is Map) {
+      final nested =
+          loadedTripFromDecoded(Map<String, dynamic>.from(map[key]));
+      if (nested != null) return nested;
+    }
+  }
+
+  final loadedId = jsonId(map['loadedTripId'] ?? map['loaded_trip_id']);
+  if (loadedId != null) {
+    final status = (map['loadedTripStatus'] ??
+            map['loaded_trip_status'] ??
+            map['status'] ??
+            '')
+        .toString();
+    final candidate = Trip(
+      id: loadedId,
+      status: status,
+      loadId: jsonId(map['loadId'] ?? map['load']),
+      startingMillage:
+          (map['startMileage'] ?? map['startingMileage'] ?? map['startingMillage'] ?? '')
+              .toString(),
+      endingMillage:
+          (map['endMileage'] ?? map['endingMileage'] ?? map['endingMillage'] ?? '')
+              .toString(),
+    );
+    if (tripPhaseOf(candidate) == TripPhase.loaded) return candidate;
+  }
+
+  if (map['data'] is Map) {
+    final fromData = loadedTripFromDecoded(map['data']);
+    if (fromData != null) return fromData;
+  }
+  if (map['trip'] is Map) {
+    final fromTrip = loadedTripFromDecoded(map['trip']);
+    if (fromTrip != null) return fromTrip;
+  }
+
+  final trip = Trip.fromJson(map);
+  if (trip.id != null && tripPhaseOf(trip) == TripPhase.loaded) {
+    return trip;
+  }
+  return null;
+}
+
+Trip? activeTripFromResponseBody(String body) {
+  final trimmed = body.trim();
+  if (trimmed.isEmpty || trimmed == 'null') return null;
+  try {
+    return activeTripFromDecoded(json.decode(trimmed));
+  } catch (_) {
+    return null;
+  }
+}
+
+Trip? activeTripFromDecoded(dynamic decoded) {
+  if (decoded == null) return null;
+
+  if (decoded is List) {
+    for (final item in decoded) {
+      final trip = activeTripFromDecoded(item);
+      if (trip != null) return trip;
+    }
+    return null;
+  }
+
+  if (decoded is! Map) return null;
+  final map = Map<String, dynamic>.from(decoded);
+
+  for (final key in [
+    'activeTrip',
+    'active_trip',
+    'loadedTrip',
+    'loaded_trip',
+  ]) {
+    if (map[key] is Map) {
+      final nested = activeTripFromDecoded(map[key]);
+      if (nested != null) return nested;
+    }
+  }
+
+  if (map['trip'] is Map) {
+    final nested = activeTripFromDecoded(map['trip']);
+    if (nested != null) return nested;
+  }
+
+  if (map['data'] is Map && jsonId(map['id']) == null) {
+    final nested = activeTripFromDecoded(map['data']);
+    if (nested != null) return nested;
+  }
+
+  final trip = Trip.fromJson(map);
+  if (trip.id == null) return null;
+  if (tripPhaseOf(trip) == TripPhase.ready) return null;
+  return trip;
+}
+
 AssignedVehicle? assignedVehicleFromJson(dynamic decoded) {
   if (decoded == null) return null;
 
@@ -172,7 +305,6 @@ AssignedVehicle? assignedVehicleFromJson(dynamic decoded) {
 class Trip {
   final int? id;
   final DateTime? dateTime;
-  final String destination;
   final String startingMillage;
   final String endingMillage;
   final String fuelLitres;
@@ -188,7 +320,6 @@ class Trip {
   Trip({
     this.id,
     this.dateTime,
-    this.destination = '',
     this.startingMillage = '',
     this.endingMillage = '',
     this.fuelLitres = '',
@@ -219,11 +350,16 @@ class Trip {
     return Trip(
       id: nestedId(json['id']),
       dateTime: parsedDate,
-      destination: json['destination']?.toString() ?? '',
-      startingMillage: (json['startingMillage'] ?? json['startingMileage'] ?? '')
+      startingMillage: (json['startMileage'] ??
+              json['startingMileage'] ??
+              json['startingMillage'] ??
+              '')
           .toString(),
-      endingMillage:
-          (json['endingMillage'] ?? json['endingMileage'] ?? '').toString(),
+      endingMillage: (json['endMileage'] ??
+              json['endingMileage'] ??
+              json['endingMillage'] ??
+              '')
+          .toString(),
       fuelLitres: (json['fuelLitres'] ?? '').toString(),
       trailer1: json['trailer1']?.toString() ?? '',
       trailer2: json['trailer2']?.toString() ?? '',
@@ -248,7 +384,6 @@ class Trip {
     return Trip(
       id: id ?? this.id,
       dateTime: dateTime,
-      destination: destination,
       startingMillage: startingMillage ?? this.startingMillage,
       endingMillage: endingMillage ?? this.endingMillage,
       fuelLitres: fuelLitres,
@@ -286,15 +421,15 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
   final TextEditingController _dieselLitresController = TextEditingController();
   final TextEditingController _trailer1Controller = TextEditingController();
   final TextEditingController _trailer2Controller = TextEditingController();
+  final TextEditingController _weighbridgeController = TextEditingController();
 
-  List<Trip> _trips = [];
   List<Load> _assignedLoads = [];
   Load? _selectedLoad;
   Trip? _activeTrip;
   AssignedVehicle? _assignedVehicle;
-  bool _isLoading = false;
   bool _isLoadingLoads = false;
   bool _isSubmitting = false;
+  bool _isInitializing = true;
   String? _endMileageError;
 
   TripPhase get _phase => tripPhaseOf(_activeTrip);
@@ -336,55 +471,63 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     } catch (e) {
       print('Initialization Error: $e');
       _showErrorSnackBar('Error initializing driver information');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
+      }
     }
   }
 
   Future<void> _refresh() async {
     await Future.wait([
       _fetchAssignedLoads(),
-      _fetchTrips(),
       _fetchAssignedVehicle(),
+      _fetchActiveTrip(),
     ]);
+    if (mounted) {
+      _syncSelectedLoad();
+    }
   }
 
   Future<void> _fetchAssignedVehicle() async {
     if (_driverID == null) return;
 
     final token = await _authService.getToken();
-    final candidateUrls = [
-      '$_apiHost/api/drivers/$_driverID',
-      '$_apiHost/api/drivers/$_driverID/vehicle',
-      '$_apiHost/api/drivers/$_driverID/assigned-vehicle',
-      '$_apiHost/api/vehicles/assigned/$_driverID',
-      '$_apiHost/api/vehicles/driver/$_driverID',
-    ];
+    final url = '$_apiHost/api/drivers/me/assigned-vehicle';
 
-    AssignedVehicle? found;
-    for (final url in candidateUrls) {
-      try {
-        print('Fetching assigned vehicle from: $url');
-        final response = await http.get(
-          Uri.parse(url),
-          headers: _authHeaders(token),
-        );
-        print('Assigned vehicle $url -> ${response.statusCode}');
-        if (response.statusCode != 200 || response.body.isEmpty) continue;
+    try {
+      print('GET $url');
+      final response = await http.get(
+        Uri.parse(url),
+        headers: _authHeaders(token),
+      );
+      print('Assigned vehicle ${response.statusCode}: ${response.body}');
 
-        final vehicle = assignedVehicleFromJson(json.decode(response.body));
-        if (vehicle != null) {
-          found = vehicle;
-          print('Using assigned-vehicle endpoint: $url (${vehicle.plate})');
-          break;
-        }
-      } catch (e) {
-        print('Assigned vehicle lookup failed for $url: $e');
+      if (response.statusCode == 204 ||
+          response.statusCode == 404 ||
+          response.body.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _assignedVehicle = null;
+        });
+        return;
       }
-    }
 
-    if (!mounted) return;
-    setState(() {
-      _assignedVehicle = found;
-    });
+      if (response.statusCode != 200) {
+        _showErrorSnackBar('Failed to load assigned vehicle');
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _assignedVehicle = assignedVehicleFromJson(json.decode(response.body));
+      });
+    } catch (e) {
+      print('Error in _fetchAssignedVehicle: $e');
+      _showErrorSnackBar('Error fetching assigned vehicle: $e');
+    }
   }
 
   List<dynamic> _asJsonList(dynamic decoded) {
@@ -415,35 +558,17 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     });
 
     final token = await _authService.getToken();
-    final candidateUrls = [
-      '$_apiHost/api/loads/assigned/$_driverID',
-      '$_apiHost/api/loads/driver/$_driverID',
-      '$_apiHost/api/loads/driver/username/$_driverID',
-    ];
+    final url = '$_apiHost/api/drivers/me/assigned-loads';
 
     try {
-      http.Response? success;
+      print('GET $url');
+      final response = await http.get(
+        Uri.parse(url),
+        headers: _authHeaders(token),
+      );
+      print('Assigned loads ${response.statusCode}: ${response.body}');
 
-      for (final url in candidateUrls) {
-        print('Fetching assigned loads from: $url');
-        final response = await http.get(
-          Uri.parse(url),
-          headers: _authHeaders(token),
-        );
-        print('Assigned loads $url -> ${response.statusCode}');
-
-        if (response.statusCode == 200 || response.statusCode == 204) {
-          success = response;
-          break;
-        }
-      }
-
-      if (success == null) {
-        _showErrorSnackBar('Failed to load assigned loads');
-        return;
-      }
-
-      if (success.statusCode == 204 || success.body.isEmpty) {
+      if (response.statusCode == 204 || response.body.isEmpty) {
         setState(() {
           _assignedLoads = [];
         });
@@ -451,7 +576,12 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
         return;
       }
 
-      final body = _asJsonList(json.decode(success.body));
+      if (response.statusCode != 200) {
+        _showErrorSnackBar('Failed to load assigned loads');
+        return;
+      }
+
+      final body = _asJsonList(json.decode(response.body));
       setState(() {
         _assignedLoads = body
             .whereType<Map>()
@@ -471,121 +601,66 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     }
   }
 
-  Future<void> _fetchTrips() async {
-    if (_driverID == null) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final token = await _authService.getToken();
-      final tripsUrl =
-          '$_apiHost/api/driver-trips/driver/username/$_driverID';
-      print('Constructed trips URL: $tripsUrl');
-
-      final response = await http.get(
-        Uri.parse(tripsUrl),
-        headers: _authHeaders(token),
-      );
-
-      print('Trips status: ${response.statusCode}');
-      print('Trips body: ${response.body}');
-
-      if (response.statusCode == 204 || response.body.isEmpty) {
-        setState(() {
-          _trips = [];
-        });
-      } else if (response.statusCode == 200) {
-        final body = _asJsonList(json.decode(response.body));
-        setState(() {
-          _trips = body
-              .whereType<Map>()
-              .map((item) => Trip.fromJson(Map<String, dynamic>.from(item)))
-              .toList();
-        });
-      } else {
-        _showErrorSnackBar('Failed to load trips. Error: ${response.body}');
-      }
-
-      _syncActiveTripFromList();
-      await _fetchActiveTrip();
-    } catch (e) {
-      print('Error in _fetchTrips: $e');
-      _showErrorSnackBar('Error connecting to server: $e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
   Future<void> _fetchActiveTrip() async {
     if (_driverID == null) return;
-    final token = await _authService.getToken();
-    final urls = [
-      '$_apiHost/api/driver-trips/active/$_driverID',
-      '$_apiHost/api/driver-trips/driver/$_driverID/active',
-    ];
 
-    for (final url in urls) {
-      try {
-        final response = await http.get(
-          Uri.parse(url),
-          headers: _authHeaders(token),
-        );
-        print('Active trip $url -> ${response.statusCode}');
-        if (response.statusCode == 200 && response.body.isNotEmpty) {
-          final decoded = json.decode(response.body);
-          Map<String, dynamic>? tripJson;
-          if (decoded is Map<String, dynamic>) {
-            if (decoded['id'] != null || decoded['status'] != null) {
-              tripJson = decoded;
-            } else if (decoded['trip'] is Map) {
-              tripJson = Map<String, dynamic>.from(decoded['trip']);
-            }
-          }
-          if (tripJson != null) {
-            final trip = Trip.fromJson(tripJson);
-            if (tripPhaseOf(trip) != TripPhase.ready) {
-              setState(() {
-                _activeTrip = trip;
-              });
-              _syncSelectedLoad();
-            }
-            return;
-          }
-        }
-      } catch (e) {
-        print('Active trip lookup failed for $url: $e');
+    final token = await _authService.getToken();
+    final url = '$_apiHost/api/drivers/me/active-trip';
+
+    try {
+      print('GET $url');
+      final response = await http.get(
+        Uri.parse(url),
+        headers: _authHeaders(token),
+      );
+      print('Active trip ${response.statusCode}: ${response.body}');
+
+      if (response.statusCode == 204 || response.statusCode == 404) {
+        _applyActiveTrip(null);
+        return;
       }
+
+      if (response.statusCode != 200) {
+        _showErrorSnackBar('Failed to load active trip');
+        return;
+      }
+
+      _applyActiveTrip(activeTripFromResponseBody(response.body));
+    } catch (e) {
+      print('Error in _fetchActiveTrip: $e');
+      _showErrorSnackBar('Error fetching active trip: $e');
     }
   }
 
-  void _syncActiveTripFromList() {
-    Trip? active;
-    for (final trip in _trips) {
-      if (tripPhaseOf(trip) != TripPhase.ready) {
-        active = trip;
-        break;
+  void _applyActiveTrip(Trip? trip) {
+    if (!mounted) return;
+    setState(() {
+      _activeTrip = trip;
+      if (trip == null) {
+        _endMileageError = null;
       }
-    }
-    if (active != null) {
-      setState(() {
-        _activeTrip = active;
-      });
-    }
+    });
     _syncSelectedLoad();
   }
 
   void _syncSelectedLoad() {
     final loadId = _activeTrip?.loadId;
     if (loadId == null) {
+      if (_phase != TripPhase.ready) {
+        setState(() {
+          _selectedLoad ??= Load(
+            id: _activeTrip?.loadId,
+            description: 'Active trip',
+            weight: '',
+            pickupLocation: '',
+            deliveryLocation: '',
+            status: '',
+          );
+        });
+        return;
+      }
       if (_selectedLoad != null &&
-          !_assignedLoads.any((load) => load.id == _selectedLoad!.id) &&
-          _phase == TripPhase.ready) {
+          !_assignedLoads.any((load) => load.id == _selectedLoad!.id)) {
         setState(() {
           _selectedLoad = null;
         });
@@ -622,6 +697,7 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
       _selectedLoad = load;
       _endMileageError = null;
       _endingMileageController.clear();
+      _weighbridgeController.clear();
     });
   }
 
@@ -631,7 +707,59 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
       _selectedLoad = null;
       _startingMileageController.clear();
       _endMileageError = null;
+      _weighbridgeController.clear();
     });
+  }
+
+  Future<http.Response> _patch(String path, Map<String, dynamic> body) async {
+    final token = await _authService.getToken();
+    final url = '$_apiHost$path';
+    print('PATCH $url');
+    print('PATCH body: ${json.encode(body)}');
+    final response = await http.patch(
+      Uri.parse(url),
+      headers: _authHeaders(token),
+      body: json.encode(body),
+    );
+    print('PATCH $path -> ${response.statusCode} ${response.body}');
+    return response;
+  }
+
+  Future<bool> _submitActualWeightIfNeeded() async {
+    final load = _selectedLoad;
+    if (load == null || load.id == null || !load.needsWeighbridge) {
+      return true;
+    }
+
+    final text = _weighbridgeController.text.trim();
+    if (text.isEmpty) return true;
+
+    try {
+      final response = await _patch(
+        '/api/loads/${load.id}/actual-weight',
+        {'actualWeight': weighbridgeJson(text)},
+      );
+      if (response.statusCode == 200 ||
+          response.statusCode == 201 ||
+          response.statusCode == 204) {
+        if (mounted) {
+          setState(() {
+            _selectedLoad = load.copyWith(actualWeight: text);
+          });
+        }
+        return true;
+      }
+      final detail = response.body.trim();
+      _showErrorSnackBar(
+        detail.isEmpty
+            ? 'Failed to save weighbridge reading'
+            : 'Failed to save weighbridge reading: $detail',
+      );
+      return false;
+    } catch (e) {
+      _showErrorSnackBar('Error saving weighbridge reading');
+      return false;
+    }
   }
 
   Future<http.Response> _post(String path, Map<String, dynamic> body) async {
@@ -696,8 +824,7 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     final driverId = int.tryParse(_driverID!);
     final body = <String, dynamic>{
       'loadId': selectedLoad.id,
-      'startingMillage': millageJson(_startingMileageController.text),
-      'dateTime': DateTime.now().toIso8601String(),
+      'startMileage': millageJson(_startingMileageController.text),
     };
     if (driverId != null) {
       body['driverId'] = driverId;
@@ -754,30 +881,29 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     }
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final body = <String, dynamic>{
-      'tripId': trip!.id,
-      'id': trip.id,
-      'endingMillage': millageJson(_endingMileageController.text),
-    };
-
     setState(() {
       _isSubmitting = true;
       _endMileageError = null;
     });
 
     try {
+      if (!await _submitActualWeightIfNeeded()) return;
+
+      final body = <String, dynamic>{
+        'tripId': trip!.id,
+        'endMileage': millageJson(_endingMileageController.text),
+      };
       final response = await _post('/api/driver-trips/deadhead-end', body);
       if (response.statusCode == 200 || response.statusCode == 201) {
-        final updated =
-            _tripFromResponse(response, fallbackStatus: 'LOADED') ??
-                trip.copyWith(
-                  status: 'LOADED',
-                  endingMillage: _endingMileageController.text.trim(),
-                );
-        setState(() {
-          _activeTrip = updated.copyWith(
-            status: updated.status.isEmpty ? 'LOADED' : updated.status,
+        final loadedTrip = loadedTripFromDeadheadEndResponse(response.body);
+        if (loadedTrip == null || loadedTrip.id == null) {
+          _showErrorSnackBar(
+            'Deadhead ended, but no loaded trip id was returned. Pull to refresh.',
           );
+          return;
+        }
+        setState(() {
+          _activeTrip = loadedTrip;
           _endingMileageController.clear();
           _endMileageError = null;
         });
@@ -803,22 +929,22 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     }
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final fuel = _dieselLitresController.text.trim();
-    final body = <String, dynamic>{
-      'tripId': trip!.id,
-      'id': trip.id,
-      'endingMillage': millageJson(_endingMileageController.text),
-      'fuelLitres': double.tryParse(fuel) ?? fuel,
-      'trailer1': _trailer1Controller.text.trim(),
-      'trailer2': _trailer2Controller.text.trim(),
-    };
-
     setState(() {
       _isSubmitting = true;
       _endMileageError = null;
     });
 
     try {
+      if (!await _submitActualWeightIfNeeded()) return;
+
+      final fuel = _dieselLitresController.text.trim();
+      final body = <String, dynamic>{
+        'tripId': trip!.id,
+        'endMileage': millageJson(_endingMileageController.text),
+        'fuelLitres': double.tryParse(fuel) ?? fuel,
+        'trailer1': _trailer1Controller.text.trim(),
+        'trailer2': _trailer2Controller.text.trim(),
+      };
       final response = await _post('/api/driver-trips/loaded-trip-end', body);
       if (response.statusCode == 200 || response.statusCode == 201) {
         _resetForm();
@@ -843,6 +969,7 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     _dieselLitresController.clear();
     _trailer1Controller.clear();
     _trailer2Controller.clear();
+    _weighbridgeController.clear();
     _selectedLoad = null;
     _activeTrip = null;
     _endMileageError = null;
@@ -859,7 +986,7 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
 
   @override
   Widget build(BuildContext context) {
-    if (_driverID == null) {
+    if (_driverID == null || _isInitializing) {
       return Scaffold(
         appBar: AppBar(
           title: Text("Driver's Trip Sheet"),
@@ -891,11 +1018,18 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
                   selectedLoad: _selectedLoad,
                   onSelect: _selectLoad,
                 ),
-                if (_selectedLoad != null)
+                if (_selectedLoad != null || _phase != TripPhase.ready)
                   Form(
                     key: _formKey,
                     child: TripFlowPanel(
-                      load: _selectedLoad!,
+                      load: _selectedLoad ??
+                          Load(
+                            description: 'Active trip',
+                            weight: '',
+                            pickupLocation: '',
+                            deliveryLocation: '',
+                            status: '',
+                          ),
                       phase: _phase,
                       startMileage: _phaseStartMileage,
                       startMileageController: _startingMileageController,
@@ -903,6 +1037,7 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
                       dieselController: _dieselLitresController,
                       trailer1Controller: _trailer1Controller,
                       trailer2Controller: _trailer2Controller,
+                      weighbridgeController: _weighbridgeController,
                       endMileageError: _endMileageError,
                       isSubmitting: _isSubmitting,
                       onStartTrip: _startDeadhead,
@@ -919,95 +1054,9 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
                       },
                     ),
                   ),
-                _buildTripRecordsCard(),
-                _buildSummaryCard(),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTripRecordsCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Trip Records',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
-              ),
-            ),
-            SizedBox(height: 16),
-            _isLoading
-                ? Center(child: CircularProgressIndicator())
-                : _trips.isEmpty
-                    ? Center(child: Text('No trips found'))
-                    : SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: DataTable(
-                          columns: [
-                            DataColumn(label: Text('Date')),
-                            DataColumn(label: Text('Vehicle')),
-                            DataColumn(label: Text('Load ID')),
-                            DataColumn(label: Text('Status')),
-                            DataColumn(label: Text('Starting Mileage')),
-                            DataColumn(label: Text('Ending Mileage')),
-                            DataColumn(label: Text('Fuel Litres')),
-                          ],
-                          rows: _trips.map((trip) {
-                            return DataRow(cells: [
-                              DataCell(Text(trip.dateTime == null
-                                  ? ''
-                                  : DateFormat('yyyy-MM-dd')
-                                      .format(trip.dateTime!))),
-                              DataCell(Text(trip.plateNumber)),
-                              DataCell(Text(trip.loadId?.toString() ?? '')),
-                              DataCell(Text(trip.status.isEmpty
-                                  ? trip.legType
-                                  : trip.status)),
-                              DataCell(Text(trip.startingMillage)),
-                              DataCell(Text(trip.endingMillage)),
-                              DataCell(Text(trip.fuelLitres)),
-                            ]);
-                          }).toList(),
-                        ),
-                      ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSummaryCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Total Trips',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            Text(
-              _trips.length.toString(),
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -1020,6 +1069,7 @@ class _DriverTripSheetState extends State<DriverTripSheet> {
     _dieselLitresController.dispose();
     _trailer1Controller.dispose();
     _trailer2Controller.dispose();
+    _weighbridgeController.dispose();
     super.dispose();
   }
 }
@@ -1144,6 +1194,7 @@ class TripFlowPanel extends StatelessWidget {
   final TextEditingController dieselController;
   final TextEditingController trailer1Controller;
   final TextEditingController trailer2Controller;
+  final TextEditingController? weighbridgeController;
   final String? endMileageError;
   final bool isSubmitting;
   final VoidCallback onStartTrip;
@@ -1162,6 +1213,7 @@ class TripFlowPanel extends StatelessWidget {
     required this.dieselController,
     required this.trailer1Controller,
     required this.trailer2Controller,
+    this.weighbridgeController,
     required this.endMileageError,
     required this.isSubmitting,
     required this.onStartTrip,
@@ -1267,6 +1319,7 @@ class TripFlowPanel extends StatelessWidget {
           return null;
         },
       ),
+      ..._weighbridgeFields(requiredReading: false),
       const SizedBox(height: 12),
       SizedBox(
         width: double.infinity,
@@ -1306,6 +1359,7 @@ class TripFlowPanel extends StatelessWidget {
           return null;
         },
       ),
+      ..._weighbridgeFields(requiredReading: true),
       TextFormField(
         controller: dieselController,
         decoration: const InputDecoration(
@@ -1348,6 +1402,37 @@ class TripFlowPanel extends StatelessWidget {
           ),
         ),
       ),
+    ];
+  }
+
+  List<Widget> _weighbridgeFields({required bool requiredReading}) {
+    if (!load.needsWeighbridge || weighbridgeController == null) {
+      return [];
+    }
+    return [
+      TextFormField(
+        controller: weighbridgeController,
+        decoration: InputDecoration(
+          labelText: 'Weighbridge reading',
+          hintText: requiredReading
+              ? 'Tonnes from the weighbridge'
+              : 'Enter if the weighbridge is at this stop',
+        ),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        validator: (value) {
+          final text = value?.trim() ?? '';
+          if (text.isEmpty) {
+            return requiredReading
+                ? 'Please enter the weighbridge reading'
+                : null;
+          }
+          if (double.tryParse(text) == null) {
+            return 'Please enter a valid number';
+          }
+          return null;
+        },
+      ),
+      const SizedBox(height: 12),
     ];
   }
 }

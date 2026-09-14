@@ -9,7 +9,8 @@ class Load {
   final String pickupLocation;
   final String deliveryLocation;
   final String status;
-  // Add other properties as needed
+  final String cargoType;
+  final String actualWeight;
 
   Load(
       {this.id,
@@ -20,7 +21,21 @@ class Load {
       required this.weight,
       required this.pickupLocation,
       required this.deliveryLocation,
-      required this.status});
+      required this.status,
+      this.cargoType = '',
+      this.actualWeight = ''});
+
+  String get _cargoToken =>
+      cargoType.toUpperCase().replaceAll('-', '_').trim();
+
+  bool get isBulk => _cargoToken == 'BULK';
+
+  bool get isBagged => _cargoToken == 'BAGGED';
+
+  bool get hasActualWeight =>
+      actualWeight.isNotEmpty && actualWeight != 'null';
+
+  bool get needsWeighbridge => isBulk && !hasActualWeight;
 
   static int? _asInt(dynamic value) {
     if (value == null) return null;
@@ -54,6 +69,13 @@ class Load {
       pickupLocation: json['pickupLocation']?.toString() ?? '',
       deliveryLocation: json['deliveryLocation']?.toString() ?? '',
       status: json['status']?.toString() ?? '',
+      cargoType: (json['cargoType'] ??
+              json['cargo_type'] ??
+              json['loadType'] ??
+              '')
+          .toString(),
+      actualWeight: (json['actualWeight'] ?? json['actual_weight'] ?? '')
+          .toString(),
     );
   }
 
@@ -65,6 +87,36 @@ class Load {
       'pickupLocation': pickupLocation,
       'deliveryLocation': deliveryLocation,
       'status': status,
+      if (cargoType.isNotEmpty) 'cargoType': cargoType,
+      if (actualWeight.isNotEmpty) 'actualWeight': actualWeight,
     };
+  }
+
+  Load copyWith({
+    int? id,
+    int? customerId,
+    int? driverId,
+    String? customerName,
+    String? description,
+    String? weight,
+    String? pickupLocation,
+    String? deliveryLocation,
+    String? status,
+    String? cargoType,
+    String? actualWeight,
+  }) {
+    return Load(
+      id: id ?? this.id,
+      customerId: customerId ?? this.customerId,
+      driverId: driverId ?? this.driverId,
+      customerName: customerName ?? this.customerName,
+      description: description ?? this.description,
+      weight: weight ?? this.weight,
+      pickupLocation: pickupLocation ?? this.pickupLocation,
+      deliveryLocation: deliveryLocation ?? this.deliveryLocation,
+      status: status ?? this.status,
+      cargoType: cargoType ?? this.cargoType,
+      actualWeight: actualWeight ?? this.actualWeight,
+    );
   }
 }
